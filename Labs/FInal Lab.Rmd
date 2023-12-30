@@ -1,0 +1,171 @@
+---
+title: "Final Lab"
+author: "Kimberly Boswell"
+date: "12/6/2023"
+output: pdf_document
+---
+```{r, include=F}
+rm(list=ls()) #Removes all items in Environment!
+library(nlWaldTest) # for the `nlWaldtest()` function
+library(lmtest) #for `coeftest()` and `bptest()`.
+library(broom) #for `glance(`) and `tidy()`
+library(POE5Rdata) #for PoE4 datasets
+library(car) #for `hccm()` robust standard errors
+library(sandwich)
+library(knitr) #for `kable()`
+library(forecast) 
+library(AER)
+library(xtable)
+library(stargazer)
+library(MCMCpack)
+library(lmtest)
+library(car)
+library(margins)
+library(plm)
+
+```
+
+\section{Panel Data}
+
+How do we choose between a one way(individual or time only) versus a two-way fixed effect model? 
+
+```{r}
+data("EmplUK")
+emppan <- pdata.frame(EmplUK, index=c("firm","year"), drop.index=TRUE, row.names=TRUE)
+
+emppool <- plm(output~wage+capital+emp, data = EmplUK, model = "pooling")
+empfixed.time<- plm(output~wage+capital+emp, data = EmplUK, model = "within", effect = "time")
+pFtest( empfixed.time, emppool)
+```
+
+You may need to change the method by which it estimates the parameters. 
+
+\section{Qualitative Dependent Variable Models}
+
+Using the `TitanicSurvival` dataset, 
+1) Create a linear probability model
+2) Correct for heteroskedasticity
+3) What can be said about the likelihood of survival for older passengers versus younger. How about with respect to gender or passenger class? 
+4) What do you notice if you use margins to ascertain the marginal effect of the model? 
+5) Use a probit and logit model to evaluate and give the probability of survival of a 33 year old 3rd class woman on the sub. 
+6) Compare models
+
+```{r}
+library(margins)
+
+data("TitanicSurvival")
+TitanicSurvival$survivednum <- as.numeric(TitanicSurvival$survived) - 1
+titanreg.lpm <- lm(survivednum~ sex + age + passengerClass, data = TitanicSurvival)
+coeftest(titanreg.lpm, vcov = hccm(titanreg.lpm,type="hc1"))
+
+predict(titanreg.lpm, data.frame(sex = "female", age = 33, passengerClass = "3rd"),
+        type = "response")
+predict(titanreg.lpm, data.frame(sex = "male", age = 33, passengerClass = "3rd"),
+        type = "response")
+
+margins(titanreg.lpm)
+
+
+titanreg.probit <- glm(survivednum~ sex + age + passengerClass, data = TitanicSurvival,
+                       family=binomial(link="probit"))
+
+titanreg.logit <- glm(survivednum~ sex + age + passengerClass, data = TitanicSurvival,
+                      family=binomial(link="logit"))
+
+predvalp <- predict(titanreg.probit, data.frame(sex = "male", age = 33, 
+                                                passengerClass = "3rd"))
+pnorm(predvalp)
+
+predict(titanreg.probit, data.frame(sex = "male", age = 33, 
+                                    passengerClass = "3rd"),type = "response" )
+
+
+predict(titanreg.logit, data.frame(sex = "male", age = 33, passengerClass = "3rd"),
+        type = "response")
+
+
+margins(titanreg.probit)
+
+```
+
+\section{In class code example - Coke v Pepsi}
+
+```{r allthree}
+data("coke")
+coke.LPM <- lm(coke~pratio+disp_coke+disp_pepsi, 
+              data=coke)
+#hcse for the lpm
+
+hcErrors <- coeftest(coke.LPM,vcov.=hccm(coke.LPM,type="hc1"))
+
+
+coke.probit <- glm(coke~pratio+disp_coke+disp_pepsi, 
+              data=coke, family=binomial(link="probit"))
+coke.logit <- glm(coke~pratio+disp_coke+disp_pepsi, 
+              data=coke, family=binomial(link="logit"))
+
+stargazer(hcErrors, coke.probit, coke.logit,
+  header=FALSE, 
+  title="Three Binary Choice Models for the $coke$ Problem",
+  type="text",
+  keep.stat="n",digits=4, single.row=FALSE,
+  intercept.bottom=FALSE,
+  model.names=FALSE,
+  column.labels=c("LPM","probit","logit"),
+  omit.table.layout="n")
+
+hcErrors
+
+```
+
+\subsection{Extracting Probabilities}
+Now, if we want to find the probabilities at the representative points, 
+```{r prob}
+
+mod_est_lpm <- predict(coke.LPM, newdata=data.frame(pratio=1.2, disp_coke = 0, disp_pepsi=0) )
+mod_est_lpm
+
+mod_est_probit <- predict(coke.probit, newdata=data.frame(pratio=1.2, disp_coke = 0, disp_pepsi=0) )
+pnorm(mod_est_probit)
+
+mod_est_logit <- predict(coke.logit, newdata=data.frame(pratio=1.2, disp_coke = 0, disp_pepsi=0) )
+plogis(mod_est_logit)
+
+```
+
+This way allows us to see the two part extraction of the probabilities
+1. the linear portion
+2. the corresponding probabilities using the standard normal cdf (probit) or logistic cdf (logit)
+
+We could compute the probabilities, corresponding standard errors, degrees of freedom and residuals in one step: 
+```{r prob_se}
+
+predict(coke.LPM, data.frame(pratio=1.2, disp_coke = 0, disp_pepsi=0),
+        type = "response", se.fit = TRUE)
+
+predict(coke.probit, data.frame(pratio=1.2, disp_coke = 0, disp_pepsi=0),
+        type = "response", se.fit = TRUE)
+
+predict(coke.logit, data.frame(pratio=1.2, disp_coke = 0, disp_pepsi=0),
+        type = "response", se.fit = TRUE)
+
+```
+
+Adding "response" gives us the response variable prediction rather than the result of the linear predictors. 
+\newpage
+
+\subsection{Marginal Effects}
+Next we might be interested in the respective marginal effects, we will look at AER and MER. Using the `margins` package, we have: 
+
+```{r marg_eff}
+#Average Marginal Effect
+margins(coke.LPM)
+margins(coke.probit)
+margins(coke.logit)
+
+#At a representative point
+margins(coke.probit, at = list(pratio=1.1, disp_coke = 0, disp_pepsi=0))
+
+margins(coke.logit, at = list(pratio=1.2, disp_coke = 0, disp_pepsi=0))
+
+```
